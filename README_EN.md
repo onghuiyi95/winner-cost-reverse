@@ -13,10 +13,10 @@ definitions):
 
 | Function | Address | Role |
 |---|---|---|
-| `FUN_100ccf00` | WINNER core | 836-line decompile — reads `skbjTemp.dat`, double-loop accumulates `local_208` (volume per bin), WINNER lookup (line 405–431) |
+| `FUN_100ccf00` | WINNER core | 836-line decompile — builds `local_208` (per-bar array, length = bar count) from `FUN_100dd8dc()`, date→day# hash via `aiStack_1dc`, WINNER lookup (line 405–431) |
 | `FUN_100cf400` | COST core | 1043-line decompile — inverse of WINNER: finds the price where cumulative volume ratio ≥ `frac` |
 | `FUN_100934f0` | WINNER ctor | sets 14 flags by type code `0x138`, vtable `PTR_WINNER_IMPL_1015e7f8` |
-| `aiStack_1dc[113]` | lookup table | 113 real constants extracted verbatim (see `decompiled/aiStack_1dc_real.txt`) |
+| `aiStack_1dc[113]` | date table | 113 real constants; `[0..12]` = days-per-month table (NOT a price-bin table — see correction) |
 
 Both functions are **isomorphic**: each does data-load (`FUN_100dd8dc` /
 `FUN_1009e2d0`) + math (double-loop accumulation) + thread-locks
@@ -81,17 +81,20 @@ src/                Implementations (verified)
 
 ## Implementation notes
 
-The implementation replicates the DLL's two-layer structure: build a 113-bin
-volume-accumulation array (aligned with `local_208`), then `WINNER(P)` =
-cumulative ratio up to the target bin (aligned with line 405–431), and
-`COST(frac)` = inverse lookup (aligned with `FUN_100cf400`).
+The implementation currently uses a **uniform 113-bin volume-accumulation
+model** (rebuilt from local OHLCV) as an approximation of WINNER/COST. This is
+structurally **not identical** to the DLL: in `FUN_100ccf00`, `local_208` is a
+**per-bar (time-series) array of length = bar count**, and `aiStack_1dc` is a
+**date→day-number hash table** (monthly cumulative-days table in `[0..12]`),
+used to locate each bar — NOT a fixed 113 price-bin table. The exact semantics
+of `local_208` (what `FUN_100dd8dc()` returns on its 2nd call) and the precise
+WINNER counting logic (lines 405–431) are still being verified.
 
-Verification: `ZSHTL + ZZLKP = 100` (conserved); `COST(0.5)=106.4 → WINNER=0.5015`.
+Verification done so far: `ZSHTL + ZZLKP = 100` (conserved);
+`COST(0.5)=106.4 → WINNER=0.5015` (inverse holds, within discretization error).
 
-`aiStack_1dc[113]` is included verbatim but its exact hash-mapping
-(price→bin, lines 205–265) is **not fully deciphered** — the implementation
-uses uniform 113 bins to replicate the accumulate+lookup structure. The upstream
-`skbjTemp.dat` algorithm is **outside this DLL** (see above).
+See `docs/HASH_MAPPING_SOLVED.md` (date-table solved) and
+`docs/LOCAL_COMPUTE_CORRECTION.md` (local compute, not server-side).
 
 ## License
 
