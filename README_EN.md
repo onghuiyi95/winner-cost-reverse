@@ -79,22 +79,30 @@ src/                Implementations (verified)
   cost_113.pine     COST standalone
 ```
 
-## Implementation notes
+## Implementation notes (aligned with DLL, 2026-08-18)
 
-The implementation currently uses a **uniform 113-bin volume-accumulation
-model** (rebuilt from local OHLCV) as an approximation of WINNER/COST. This is
-structurally **not identical** to the DLL: in `FUN_100ccf00`, `local_208` is a
-**per-bar (time-series) array of length = bar count**, and `aiStack_1dc` is a
-**date→day-number hash table** (monthly cumulative-days table in `[0..12]`),
-used to locate each bar — NOT a fixed 113 price-bin table. The exact semantics
-of `local_208` (what `FUN_100dd8dc()` returns on its 2nd call) and the precise
-WINNER counting logic (lines 405–431) are still being verified.
+`src/winner_113.py` now matches the **real DLL structure** (asm-verified):
 
-Verification done so far: `ZSHTL + ZZLKP = 100` (conserved);
-`COST(0.5)=106.4 → WINNER=0.5015` (inverse holds, within discretization error).
+- `pdVar4` buffer = **12 bytes/bar (3 floats)**: `[+0]=close(cost)`, `[+0xc]=date`
+  (asm: line208 `fld [pdVar4+0xc]`=date, line242/250 `fld [pdVar4+0]`=close)
+- `local_208[k]` = close of bar k (equal-weight)
+- `WINNER(P)` = fraction of bars with `close <= P` (equal-weight cost distribution)
+- `COST(frac)` = inverse of WINNER
+- `aiStack_1dc[0..12]` = monthly cumulative-days table (date→day# hash, **confirmed**)
+- `aiStack_1dc[13..]` = month-cycle alignment table (decides which bars write to
+  `local_208`); used by WINNER only, NOT by COST → not a price-bin table
+  (**inferred**; exact bit-ops not fully deciphered, but impact on continuous
+  trading-day data is negligible)
 
-See `docs/HASH_MAPPING_SOLVED.md` (date-table solved) and
-`docs/LOCAL_COMPUTE_CORRECTION.md` (local compute, not server-side).
+Verification: `WINNER(CLOSE)=1.0` when close is the highest; `COST(0.5)=11.3 →
+WINNER=0.5` (inverse exact); `ZSHTL+ZZLKP=100` (conserved).
+
+Note: DLL uses **equal-weight per bar**; standard TV `WINNER` uses
+**volume-weighting**. That is the only structural difference.
+
+See `docs/PDVAR4_FIELDS.md` (asm field proof), `docs/HASH_MAPPING_SOLVED.md`
+(date-table), `docs/AISTACK_13PLUS.md` ([13..] analysis),
+`docs/LOCAL_COMPUTE_CORRECTION.md` (local compute).
 
 ## License
 
