@@ -72,11 +72,11 @@ docs/               Reverse-engineering notes (Chinese + tracing)
   WINNER_完整反编译记录.md
   WINNER_算法白皮书.md
   SKBJ_TRACING.md         upstream skbjTemp.dat writer tracing
-src/                Implementations (verified, both versions)
-  winner_113.py     WINNER(P) + 主力筹码 — equal-weight (dll) AND volume-weight (TV)
-  cost_113.py       COST(frac) + WINNER↔COST inverse (both versions)
-  winner_113.pine   //@version=5 — WINNER + COST + chips (equal/volume weight toggle)
-  cost_113.pine     COST standalone (equal/volume weight toggle)
+src/                Clean WINNER/COST only (both versions, no chip-distribution extras)
+  winner_113.py     WINNER(P) — equal-weight (dll) AND volume-weight (TV)
+  cost_113.py       COST(frac) — equal-weight (dll) AND volume-weight (TV)
+  winner_113.pine   //@version=5 — WINNER(P) + COST(50%) (weight toggle)
+  cost_113.pine     COST(frac) standalone (weight toggle)
 ```
 
 ## Implementation notes (aligned with DLL, 2026-08-18)

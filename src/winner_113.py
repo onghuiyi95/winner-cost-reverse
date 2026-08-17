@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-WINNER(P) / COST(frac) / 主力筹码分布 — 对齐 CompMan.dll (FUN_100ccf00 / FUN_100cf400)
+WINNER(P) / COST(frac) — 对齐 CompMan.dll (FUN_100ccf00 / FUN_100cf400)
 
 dll 铁证 (汇编级):
   pdVar4: 每根K线 12字节 = 3 float, [+0]=收盘价(成本), [+0xc]=日期
   local_208[k] = 第k根K线收盘价
   WINNER(P) = 成本 <= P 的占比
-  COST(frac) = WINNER 逆运算 (累计占比达 frac 的价位)
+  COST(frac) = WINNER 的逆运算 (累计占比达 frac 的价位)
 
 两个版本:
-  A) 等权版 (equal_weight)   — 对齐 dll 真实结构 (每根K线等权)
+  A) 等权版 (equal_weight)    — 对齐 dll 真实结构 (每根K线等权)
   B) 成交量加权版 (vol_weight) — 对齐 TV 标准 WINNER (按成交量加权)
 
 bars = [(date_int, open, high, low, close, vol), ...]   date_int=YYYYMMDD
@@ -32,10 +32,12 @@ def build(bars):
 
 # ---------- A) 等权版 (对齐 dll) ----------
 def winner_eq(closes, P):
+    """WINNER(P) = 成本 <= P 的K线占比 (等权)"""
     if not closes: return 0.0
     return sum(1 for c in closes if c <= P) / len(closes)
 
 def cost_eq(closes, frac):
+    """COST(frac) = 累计占比达 frac 的价位 (等权, WINNER逆运算)"""
     if not closes: return 0.0
     s = sorted(closes)
     idx = max(0, min(len(s)-1, int(frac*len(s)+0.5)-1))
@@ -43,13 +45,14 @@ def cost_eq(closes, frac):
 
 # ---------- B) 成交量加权版 (对齐 TV) ----------
 def winner_vol(closes, vols, P):
+    """WINNER(P) = 成本 <= P 的累计成交量占比 (加权)"""
     if not closes: return 0.0
     tot = sum(vols)
     if tot <= 0: return winner_eq(closes, P)
-    w = sum(v for c,v in zip(closes,vols) if c <= P)
-    return w / tot
+    return sum(v for c,v in zip(closes,vols) if c <= P) / tot
 
 def cost_vol(closes, vols, frac):
+    """COST(frac) = 累计成交量占比达 frac 的价位 (加权, WINNER逆运算)"""
     if not closes: return 0.0
     pairs = sorted(zip(closes, vols))
     tot = sum(v for _,v in pairs)
@@ -59,26 +62,6 @@ def cost_vol(closes, vols, frac):
         if cum/tot >= frac:
             return c
     return pairs[-1][0]
-
-def main_chip(closes, vols, close_now, weighted=False):
-    if weighted:
-        Wc     = winner_vol(closes, vols, close_now)
-        Wc_low = winner_vol(closes, vols, close_now*0.9)
-        Wc_hi  = winner_vol(closes, vols, close_now*1.1)
-    else:
-        Wc     = winner_eq(closes, close_now)
-        Wc_low = winner_eq(closes, close_now*0.9)
-        Wc_hi  = winner_eq(closes, close_now*1.1)
-    # 用户原式: ZLCM=EMA(WINNER*70,3); SHCM=EMA((W_hi-W_low)*80,3)
-    def ema(vals, a=0.5):
-        prev = vals[0] if vals else 0
-        for v in vals: prev = a*v + (1-a)*prev
-        return prev
-    zlcm = ema([Wc*70]*3)
-    shcm = ema([(Wc_hi-Wc_low)*80]*3)
-    tot = zlcm+shcm
-    if tot <= 0: return 0,0,0,0
-    return zlcm, shcm, shcm/tot*100, zlcm/tot*100
 
 if __name__ == "__main__":
     bars = [
@@ -96,12 +79,10 @@ if __name__ == "__main__":
     closes, vols = build(bars)
     cn = closes[-1]
     print("=== A) 等权版 (对齐 dll) ===")
-    print("WINNER(C=%.1f)=%.3f  WINNER(11.0)=%.3f" % (cn, winner_eq(closes,cn), winner_eq(closes,11.0)))
-    cf = cost_eq(closes,0.5); print("COST(0.5)=%.3f -> WINNER回查=%.3f" % (cf, winner_eq(closes,cf)))
-    zlcm,shcm,zshtl,zzlkp = main_chip(closes,vols,cn,weighted=False)
-    print("ZSHTL=%.2f ZZLKP=%.2f (和=%.2f)" % (zshtl,zzlkp,zshtl+zzlkp))
+    print("WINNER(%.1f)=%.4f  WINNER(11.0)=%.4f" % (cn, winner_eq(closes,cn), winner_eq(closes,11.0)))
+    cf = cost_eq(closes,0.5)
+    print("COST(0.5)=%.3f -> WINNER回查=%.4f" % (cf, winner_eq(closes,cf)))
     print("\n=== B) 成交量加权版 (对齐 TV) ===")
-    print("WINNER(C=%.1f)=%.3f  WINNER(11.0)=%.3f" % (cn, winner_vol(closes,vols,cn), winner_vol(closes,vols,11.0)))
-    cfv = cost_vol(closes,vols,0.5); print("COST(0.5)=%.3f -> WINNER回查=%.3f" % (cfv, winner_vol(closes,vols,cfv)))
-    zlcm,shcm,zshtl,zzlkp = main_chip(closes,vols,cn,weighted=True)
-    print("ZSHTL=%.2f ZZLKP=%.2f (和=%.2f)" % (zshtl,zzlkp,zshtl+zzlkp))
+    print("WINNER(%.1f)=%.4f  WINNER(11.0)=%.4f" % (cn, winner_vol(closes,vols,cn), winner_vol(closes,vols,11.0)))
+    cfv = cost_vol(closes,vols,0.5)
+    print("COST(0.5)=%.3f -> WINNER回查=%.4f" % (cfv, winner_vol(closes,vols,cfv)))

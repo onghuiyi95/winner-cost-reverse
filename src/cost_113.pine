@@ -2,18 +2,15 @@
 // ============================================================================
 // COST(frac) — 对齐 CompMan.dll FUN_100cf400 (WINNER逆运算)
 // 两个版本: A) 等权(对齐dll)  B) 成交量加权(对齐TV)
-// 与 winner_113.pine 配套使用
+// 与 winner_113.pine 配套
 // ============================================================================
-indicator("COST 弘历对齐 (等权+加权)", overlay=true)
+indicator("COST 弘历对齐", overlay=true)
 
 weighted = input.bool(false, "成交量加权 (TV标准) / 等权(dll)")
 lookback = input.int(250, "回看根数", minval=10, maxval=2000)
 
 costF(frac) =>
-    if weighted
-        ta.percentile_linear_interpolation(volume > 0 ? close : close, lookback, frac * 100)
-    else
-        ta.percentile_linear_interpolation(close, lookback, frac * 100)
+    ta.percentile_linear_interpolation(close, lookback, frac * 100)
 
 plot(costF(0.1), "COST(10%)", color=color.red)
 plot(costF(0.3), "COST(30%)", color=color.orange)

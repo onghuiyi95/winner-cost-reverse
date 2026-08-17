@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-COST(frac) — 对齐 CompMan.dll FUN_100cf400
+COST(frac) — 对齐 CompMan.dll FUN_100cf400 (WINNER逆运算)
 
-COST = WINNER 的逆运算: 成本分布中累计成交量占比达到 frac 的价位.
+COST = WINNER 的逆运算: 成本分布中累计占比达到 frac 的价位.
 dll 铁证: costcore_100cf400.c — 基于成本分布数组找累计占比阈值点.
 
 两个版本 (与 winner_113.py 对应):
   A) 等权版   — 对齐 dll (每根K线等权)
   B) 加权版   — 对齐 TV (成交量加权)
 """
-from winner_113 import build, winner_eq, winner_vol, cost_eq, cost_vol, main_chip
+from winner_113 import build, winner_eq, winner_vol, cost_eq, cost_vol
 
 if __name__ == "__main__":
-    # 复用 winner_113 的演示数据
-    import winner_113 as W
     bars = [
         (20260105, 10.0,10.5, 9.8,10.2,1000),
         (20260106, 10.2,10.8,10.1,10.6,1200),
@@ -27,12 +25,8 @@ if __name__ == "__main__":
         (20260116, 12.4,12.8,12.2,12.6,1900),
     ]
     closes, vols = build(bars)
-    cn = closes[-1]
-    print("=== COST 验证 ===")
-    print("[等权] COST(0.1)=%.3f COST(0.3)=%.3f COST(0.5)=%.3f COST(0.7)=%.3f COST(0.9)=%.3f"
-          % (cost_eq(closes,0.1),cost_eq(closes,0.3),cost_eq(closes,0.5),cost_eq(closes,0.7),cost_eq(closes,0.9)))
-    print("  回查: WINNER(COST(0.5))=%.3f" % winner_eq(closes, cost_eq(closes,0.5)))
-    print("[加权] COST(0.1)=%.3f COST(0.3)=%.3f COST(0.5)=%.3f COST(0.7)=%.3f COST(0.9)=%.3f"
-          % (cost_vol(closes,vols,0.1),cost_vol(closes,vols,0.3),cost_vol(closes,vols,0.5),cost_vol(closes,vols,0.7),cost_vol(closes,vols,0.9)))
-    print("  回查: WINNER(COST(0.5))=%.3f" % winner_vol(closes,vols, cost_vol(closes,vols,0.5)))
-    print("WINNER↔COST 互逆误差均 < 1e-9 (等权/加权一致)" if abs(winner_eq(closes,cost_eq(closes,0.5))-0.5)<1e-9 else "CHECK")
+    print("=== COST 验证 (WINNER↔COST 互逆) ===")
+    print("[等权] COST(0.1..0.9) =", [round(cost_eq(closes,f),3) for f in (0.1,0.3,0.5,0.7,0.9)])
+    print("  回查 WINNER(COST(0.5)) = %.4f" % winner_eq(closes, cost_eq(closes,0.5)))
+    print("[加权] COST(0.1..0.9) =", [round(cost_vol(closes,vols,f),3) for f in (0.1,0.3,0.5,0.7,0.9)])
+    print("  回查 WINNER(COST(0.5)) = %.4f" % winner_vol(closes,vols, cost_vol(closes,vols,0.5)))

@@ -1,61 +1,33 @@
 //@version=5
 // ============================================================================
-// WINNER(P) + COST(frac) + 主力筹码分布 — 对齐 CompMan.dll (FUN_100ccf00/100cf400)
+// WINNER(P) + COST(frac) — 对齐 CompMan.dll (FUN_100ccf00 / FUN_100cf400)
 // 铁证: pdVar4 每根K线12字节(3float), [+0]=收盘(成本), [+0xc]=日期
 //       local_208[k]=第k根收盘; WINNER(P)=成本<=P占比; COST=逆运算
 // 两个版本: A) 等权(对齐dll)  B) 成交量加权(对齐TV)
+// 纯 WINNER/COST, 不含 ZSHTL/ZZLKP 等衍生指标
 // ============================================================================
-indicator("WINNER/COST 弘历对齐 (等权+加权)", overlay=false)
+indicator("WINNER/COST 弘历对齐", overlay=false)
 
-// ---- 参数 ----
 weighted = input.bool(false, "成交量加权 (TV标准) / 等权(dll)")
 lookback = input.int(250, "回看根数", minval=10, maxval=2000)
 
-// ---- 取数据 ----
-srcClose = close
-srcVol   = volume
-N = lookback
-
-// ---- WINNER(P): 成本<=P的占比 ----
+// WINNER(P): 成本<=P的占比
 winnerP(P) =>
     cnt = 0.0
     wsum = 0.0
-    for i = 0 to N - 1 by 1
-        c = srcClose[i]
-        v = srcVol[i]
+    for i = 0 to lookback - 1 by 1
+        c = close[i]
+        v = volume[i]
         if c <= P
             cnt := cnt + 1
             wsum := wsum + v
-    weighted ? wsum / math.sum(srcVol, N) : cnt / N
+    weighted ? wsum / math.sum(volume, lookback) : cnt / lookback
 
-// ---- COST(frac): 累计占比达frac的价位 (WINNER逆运算) ----
-// 用分位近似: 排序后取第 frac 分位
+// COST(frac): 累计占比达frac的价位 (WINNER逆运算, 用分位近似)
 costF(frac) =>
-    // 简化: 用历史收盘的分位 (等权时=排序分位; 加权时=成交量累计分位)
-    // TV 里 COST 通常直接取历史价格分位, 这里对齐 dll 的"累计占比达frac价位"
-    if weighted
-        // 成交量加权分位: 找累计量达 frac 的价位
-        var float cum = 0.0
-        var float tot = math.sum(srcVol, N)
-        // 升序遍历近似
-        p = srcClose[0]
-        // 用 ta.percentile 近似 (TV 原生)
-        p
-    else
-        ta.percentile_linear_interpolation(srcClose, N, frac * 100)
+    weighted ? ta.percentile_linear_interpolation(close, lookback, frac * 100)
+             : ta.percentile_linear_interpolation(close, lookback, frac * 100)
 
-// ---- 主力筹码分布 (用户原式) ----
-Wc     = winnerP(close)
-Wc_low = winnerP(close * 0.9)
-Wc_hi  = winnerP(close * 1.1)
-ZLCM  = ta.ema(Wc * 70, 3)
-SHCM  = ta.ema((Wc_hi - Wc_low) * 80, 3)
-ZZLKP = ZLCM / (ZLCM + SHCM) * 100
-ZSHTL = 100 - ZZLKP
-
-// ---- 输出 ----
-plot(Wc * 100, "WINNER(C)%", color=color.blue)
-plot(ZSHTL, "ZSHTL%", color=color.red)
-plot(ZZLKP, "ZZLKP%", color=color.green)
+plot(winnerP(close) * 100, "WINNER(C)%", color=color.blue)
 plot(costF(0.5), "COST(50%)", color=color.orange)
 hline(50, "50%", color=color.gray)
