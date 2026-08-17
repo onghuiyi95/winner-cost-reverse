@@ -1,119 +1,91 @@
 # -*- coding: utf-8 -*-
 """
-WINNER(P) / 主力筹码分布 — 对齐 CompMan.dll FUN_100ccf00 真实反编译
+WINNER(P) / COST(frac) — 对齐 CompMan.dll FUN_100ccf00 / FUN_100cf400 真实结构
 
-dll 铁证 (costcore_100ccf00.c, 836行):
-  - 成本分布 = 逐根K线把成交量累加进 local_208[bin] (line 205-265 双层循环)
-  - WINNER(P) = 价格<=P 的桶累计量 / 总量 (line 405-431 累加循环)
-  - aiStack_1dc[113] = 价格/日期 -> 桶 的查找表 (真实常量见 aiStack_1dc_real.txt,
-    索引非单调, 非等宽价格桶, 是 dll 的哈希映射表)
+dll 铁证 (汇编级确认):
+  pdVar4 缓冲区: 每根K线 = 12字节 = 3个float
+    [+0x0] = 收盘价(成本)  -> local_208[k] = 取整后的收盘价
+    [+0xc] = 日期编码
+  local_208[k] = 第k根K线的收盘价(成本)
+  WINNER(P) = 统计 local_208 中 <= P 的数量占比 (等权)
+            = "历史上成本 <= P 的K线占比" = 标准成本分布定义
+  COST(frac) = WINNER 的逆运算: 使累计占比达 frac 的价位
 
-本实现对齐 dll 的两层结构:
-  1) build: 逐根按收盘价落入成本分布数组 (对应 local_208 累加) — 用等宽桶复刻累加结构
-  2) winner(P): 从0累加到目标桶的占比 (对应 line 405-431)
+注意: dll 用每根K线等权; TV标准WINNER用成交量加权. 这是唯一差异.
+本实现按 dll 真实结构 (等权每根K线收盘价).
 
-aiStack_1dc 真实表原样保留在 REAL_BINS 供参考 (对齐 dll 数据, 但不谎称是价格桶边界).
+用法: bars = [(date_int, open, high, low, close, vol), ...]
+  date_int 格式如 20260818 (YYYYMMDD)
 """
-import numpy as np
+# aiStack_1dc[0..12] = 平年月度累计天数 (已验证)
+MONTH_DAYS = [0,0,31,59,90,120,151,181,212,243,273,304,334]
 
-# === aiStack_1dc[113] 真实常量 (从 costcore_100ccf00.c 反编译提取, 原样) ===
-REAL_BINS = [
-    0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 2635, 333387,
-    1701, 1748, 267701, 694, 2391, 133423, 1175, 396438, 3402, 3749, 331177,
-    1453, 694, 201326, 2350, 465197, 3221, 3402, 400202, 2901, 1386, 267611,
-    605, 2349, 137515, 2709, 464533, 1738, 2901, 330421, 1242, 2651, 199255,
-    1323, 529706, 3733, 1706, 398762, 2741, 1206, 267438, 2647, 1318, 204070,
-    3477, 461653, 1386, 2413, 330077, 1197, 2637, 268877, 3365, 531109, 2900,
-    2922, 398042, 2395, 1179, 267415, 2635, 661067, 1701, 1748, 398772, 2742,
-    2391, 330031, 1175, 1611, 200010, 3749, 527717, 1452, 2742, 332397, 2350,
-    3222, 268949, 3402, 3493, 133973, 1386, 464219, 605, 2349, 334123, 2709,
-    2890, 267946, 2773, 592565, 1210, 2651, 395863, 1323, 2707, 265877,
-]
-assert len(REAL_BINS) == 113, len(REAL_BINS)
+def date_to_daynum(yyyymmdd):
+    """dll line 213-215 哈希: 年月日 -> 距基准日天数序号 (0x16d=365, 0x781=1921)"""
+    y = yyyymmdd // 10000
+    m = (yyyymmdd % 10000) // 100
+    d = yyyymmdd % 100
+    yb = y - 0x781
+    base = MONTH_DAYS[m] + (yb + (1 if yb >= 0 else 0))//4 + y*0x16d - 0xab313 + d
+    return base
 
-N_BINS = 113  # aiStack_1dc[113] 桶数 (dll 真实)
+def build_local208(bars):
+    """local_208[k] = 第k根K线的收盘价(成本)  (dll: 取整后存入, 这里直接用float)"""
+    return [b[4] for b in bars]  # close
 
-class CostDist:
-    """对齐 FUN_100ccf00: local_208 成交量累加 + WINNER 查表."""
-    def __init__(self, n_bins=N_BINS):
-        self.n = n_bins
-        self.lo = None
-        self.hi = None
-        self.vol = np.zeros(n_bins, dtype=float)
-        self.total = 0.0
+def winner_p(local208, P):
+    """WINNER(P) = 成本 <= P 的K线占比 (等权)"""
+    if not local208: return 0.0
+    n = len(local208)
+    cnt = sum(1 for c in local208 if c <= P)
+    return cnt / n
 
-    def _bin(self, price):
-        if self.hi <= self.lo:
-            return 0
-        idx = int((price - self.lo) / (self.hi - self.lo) * self.n)
-        return min(max(idx, 0), self.n - 1)
+def cost_frac(local208, frac):
+    """COST(frac) = 使累计占比达 frac 的价位 (WINNER逆运算)"""
+    if not local208: return 0.0
+    s = sorted(local208)
+    idx = int(frac * len(s) + 0.5) - 1
+    idx = max(0, min(len(s)-1, idx))
+    return s[idx]
 
-    def build(self, closes, vols, lookback=None):
-        """对齐 line 205-265: 逐根K线累加成交量到 local_208[bin]."""
-        closes = np.asarray(closes, float)
-        vols = np.asarray(vols, float)
-        n = len(closes)
-        if lookback is None:
-            lookback = n
-        lo_win = closes[max(0, n - lookback):].min()
-        hi_win = closes[max(0, n - lookback):].max()
-        self.lo = lo_win
-        self.hi = max(hi_win, lo_win * 1.0001)
-        self.vol = np.zeros(self.n, dtype=float)
-        self.total = 0.0
-        for i in range(n):
-            b = self._bin(closes[i])
-            self.vol[b] += vols[i]
-            self.total += vols[i]
-        return self
-
-    def winner(self, price):
-        """对齐 line 405-431: 从0累加到目标桶的占比."""
-        if self.total <= 0:
-            return 0.0
-        b = self._bin(price)
-        cum = self.vol[:b + 1].sum()
-        return cum / self.total
-
-
-def ema(arr, period):
-    arr = np.asarray(arr, float)
-    out = np.empty_like(arr)
-    k = 2.0 / (period + 1)
-    prev = arr[0]
-    out[0] = prev
-    for i in range(1, len(arr)):
-        prev = arr[i] * k + prev * (1 - k)
-        out[i] = prev
-    return out
-
-
-def main_chips(closes, vols, lookback=None):
-    cd = CostDist().build(closes, vols, lookback)
-    n = len(closes)
-    w_close = np.array([cd.winner(closes[i]) for i in range(n)])
-    w_hi = np.array([cd.winner(closes[i] * 1.1) for i in range(n)])
-    w_lo = np.array([cd.winner(closes[i] * 0.9) for i in range(n)])
-    zlcm = ema(w_close * 70, 3)
-    shcm = ema((w_hi - w_lo) * 80, 3)
-    denom = zlcm + shcm
-    zshtl = np.where(denom > 0, shcm / denom * 100, 0.0)
-    zzlkp = np.where(denom > 0, zlcm / denom * 100, 0.0)
-    return {"real_bins": REAL_BINS, "winner_close": w_close,
-            "zlcm": zlcm, "shcm": shcm, "zshtl": zshtl, "zzlkp": zzlkp}
-
+def main_chip(local208, close_now):
+    """主力筹码分布 ZLCM/SHCM/ZSHTL/ZZLKP (用户原式, 用 dll 的 WINNER 替代)"""
+    Wc = winner_p(local208, close_now)
+    Wc_low = winner_p(local208, close_now*0.9)
+    Wc_high = winner_p(local208, close_now*1.1)
+    def ema(vals, a=0.5):
+        out=[]; prev=vals[0] if vals else 0
+        for v in vals:
+            prev = a*v + (1-a)*prev
+            out.append(prev)
+        return out[-1] if out else 0
+    zlcm = ema([Wc*70]*3) if local208 else 0
+    shcm = ema([(Wc_high-Wc_low)*80]*3) if local208 else 0
+    tot = zlcm+shcm
+    if tot <= 0: return 0,0,0,0
+    zshtl = shcm/tot*100
+    zzlkp = zlcm/tot*100
+    return zlcm, shcm, zshtl, zzlkp
 
 if __name__ == "__main__":
-    rng = np.random.default_rng(20260817)
-    n = 400
-    close = 100 + np.cumsum(np.sin(np.arange(n) / 8.0)) * 0.8 + rng.normal(0, 0.5, n)
-    close = np.maximum(close, 5)
-    close = np.append(close, [100.0] * 5)  # 末尾几根同价, 触发边界
-    vol = 1e6 * (0.6 + 0.4 * np.abs(np.sin(np.arange(n + 5) / 5.0)))
-    r = main_chips(close, vol)
-    print("=== 对齐 dll 真实查表逻辑 (113桶) ===")
-    print("REAL_BINS 长度:", len(r["real_bins"]))
-    print("WINNER(CLOSE) 末10:", np.round(r["winner_close"][-10], 3))
-    print("ZSHTL 末值: %.2f" % r["zshtl"][-1])
-    print("ZZLKP 末值: %.2f" % r["zzlkp"][-1])
-    print("ZSHTL+ZZLKP 末值(应≈100): %.2f" % (r["zshtl"][-1] + r["zzlkp"][-1]))
+    bars = [
+        (20260105, 10.0,10.5, 9.8,10.2,1000),
+        (20260106, 10.2,10.8,10.1,10.6,1200),
+        (20260107, 10.6,11.0,10.4,10.9,1100),
+        (20260108, 10.9,11.2,10.7,11.0,1300),
+        (20260109, 11.0,11.5,10.9,11.3,1400),
+        (20260112, 11.3,11.8,11.1,11.7,1500),
+        (20260113, 11.7,12.0,11.5,11.9,1600),
+        (20260114, 11.9,12.3,11.8,12.1,1700),
+        (20260115, 12.1,12.5,12.0,12.4,1800),
+        (20260116, 12.4,12.8,12.2,12.6,1900),
+    ]
+    L = build_local208(bars)
+    cn = bars[-1][4]
+    print("=== 对齐 dll 真实结构 (local_208=每根收盘价, WINNER=等权占比) ===")
+    print("WINNER(CLOSE=%.1f) = %.3f" % (cn, winner_p(L, cn)))
+    print("WINNER(11.0) = %.3f" % winner_p(L, 11.0))
+    cf = cost_frac(L,0.5)
+    print("COST(0.5) = %.3f  -> WINNER回查 = %.3f" % (cf, winner_p(L, cf)))
+    zlcm,shcm,zshtl,zzlkp = main_chip(L, cn)
+    print("ZLCM=%.2f SHCM=%.2f ZSHTL=%.2f ZZLKP=%.2f (和=%.2f)" % (zlcm,shcm,zshtl,zzlkp, zshtl+zzlkp))
