@@ -1,0 +1,71 @@
+//@version=5
+// ============================================================================
+// 火焰山成本分布 (CYQ) — Pine 版 对齐弘历 dll FUN_008d9950
+// 算法: 成交量加权成本分布直方图; 获利盘=成本<=当前价占比; N天前=回溯
+// TV 无原生火焰山, 用水平线堆叠模拟 (每根线=一个价格桶的持仓占比)
+// 两个版本: A) 等权(对齐dll)  B) 成交量加权(对齐TV标准)
+// 注: Pine 无历史循环回溯N天前的原生支持, 用 security/数组近似
+// ============================================================================
+indicator("火焰山成本分布 CYQ", overlay=true)
+
+weighted = input.bool(false, "成交量加权 (TV) / 等权(dll)")
+lookback = input.int(250, "成本分布窗口(根)", minval=30, maxval=2000)
+nbins = input.int(50, "价格桶数(显示精度)", minval=10, maxval=200)
+
+// 构建成本分布: 用历史收盘价分桶
+var float[] binLo = array.new_float(nbins)
+var float[] binHi = array.new_float(nbins)
+var float[] binW  = array.new_float(nbins)  // 该桶累计占比
+
+f_(i) => weighted ? volume[i] : 1.0
+
+// 计算 N 个价格桶的占比 (当前截止)
+calcBins() =>
+    var float[] w = array.new_float(nbins)
+    cmin = ta.lowest(low, lookback)
+    cmax = ta.highest(high, lookback)
+    span = cmax - cmin
+    sum = 0.0
+    for i = 0 to nbins - 1
+        array.set(w, i, 0.0)
+    for i = 0 to lookback - 1
+        c = close[i]; v = f_(i)
+        idx = int((c - cmin) / span * (nbins - 1))
+        idx := math.max(0, math.min(nbins-1, idx))
+        array.set(w, idx, array.get(w, idx) + v)
+        sum := sum + v
+    // 占比数组
+    var float[] pct = array.new_float(nbins)
+    for i = 0 to nbins - 1
+        array.set(pct, i, sum > 0 ? array.get(w,i)/sum*100 : 0)
+    pct
+
+pctArr = calcBins()
+
+// 绘制: 每个价格桶画一条横线(长度=占比), 颜色按 获利/套牢
+plot_pct(i) =>
+    p = array.get(pctArr, i)
+    cmin = ta.lowest(low, lookback)
+    cmax = ta.highest(high, lookback)
+    span = cmax - cmin
+    price = cmin + span * i / (nbins - 1)
+    col = price <= close ? color.new(color.yellow, 0) : color.new(color.red, 0)
+    // 用 hline 模拟: 这里用 plot 在 price 位置画占比长度不可行(plot是时间轴)
+    // 改用: 在价格轴上用 line 画水平段
+    if barstate.islast
+        line.new(bar_index, price, bar_index + int(p), price, color=col, width=2, extend=extend.none)
+
+for i = 0 to nbins - 1
+    plot_pct(i)
+
+// 获利盘/套牢盘 输出
+cmin = ta.lowest(low, lookback); cmax = ta.highest(high, lookback); span = cmax - cmin
+winner_now = 0.0
+for i = 0 to lookback - 1
+    if close[i] <= close
+        winner_now := winner_now + f_(i)
+tot = 0.0
+for i = 0 to lookback - 1
+    tot := tot + f_(i)
+winner_now := tot > 0 ? winner_now / tot : 0
+plot(winner_now*100, "获利盘%", color=color.yellow, display=display.data_window)
