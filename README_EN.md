@@ -23,42 +23,41 @@ Both functions are **isomorphic**: each does data-load (`FUN_100dd8dc` /
 (`LOCK`/`UNLOCK`) + result formatting (`%.3lf`). They are **not** a "one does
 infra, one does math" split.
 
-## Key result: who computes the chip distribution? (skbjTemp.dat tracing)
+## Key result: chip distribution is computed LOCALLY (corrected 2026-08-18)
 
-`skbjTemp.dat` is referenced **read-only once** in the whole `CompMan.dll`
-(`CFile::Open(..., 0x8000 = modeRead)`, then `CFile::Read`/`Close`). A full
-scan shows **zero** `modeWrite`/`modeCreate` and **only one** `.dat` filename.
-→ The chip-distribution data is **pre-computed and written to disk by HongLiTong's
-upstream data engine** (separate process / likely server-pushed daily
-distribution). `WINNER`/`COST` only **read the cache and do a table lookup** —
-they do **not** compute the raw cost distribution.
+**Correction:** an earlier draft claimed the chip distribution was computed
+server-side and only read from a cache (`skbjTemp.dat`). That was **wrong**.
+Re-examining `FUN_100ccf00` (lines 205–265 vs 276–402) shows the opposite:
 
-### Upstream-writer tracing (2026-08-18)
+1. **Lines 205–265 run BEFORE any file open** — `local_208` (the cost-distribution
+   array) is built locally from `FUN_100dd8dc()` (local OHLCV source), bucketed by
+   a `aiStack_1dc` hash of the bar's date/price. No data is read from `skbjTemp.dat`
+   at this stage.
+2. **Lines 276–317** open `skbjTemp.dat` read-only (`0x8000`) to load a cached
+   **anchor** (the date-encoding value `> 0x133f073`), used for incremental align.
+3. **Lines 321+** do incremental computation using that anchor + new bars.
+4. **Lines 400–402** re-open `skbjTemp.dat` with `0x9001` (= `modeRead|modeCreate`)
+   and `CFile::Write` the anchor back. **The DLL itself writes the cache.**
 
-Scanned `HLLevel2.EXE`, `HLLevel2-2.EXE`, `Fortune.EXE`, `RecvSend-*.dll`, `CompMan.dll`:
+→ `skbjTemp.dat` is a **local cache file** (anchor + increment), not server-pushed
+data. The cost distribution is **computed locally** from OHLCV.
 
-| Binary | skbjTemp string | References it (write)? |
-|---|---|---|
-| `CompMan.dll` | yes | read-only (`modeRead`) |
-| `HLLevel2.EXE` | yes (VA `0x00d137c1`, `.rdata`) | **no static xref** (base-relative ref, Ghidra/capstone can't resolve) |
-| `HLLevel2-2.EXE` | yes | same copy |
-| `Fortune.EXE` | **no** | — |
-| `RecvSend-*.dll` | **no** | — |
+Why the earlier mistake: (a) misread line 290's `0x8000` read as "only reads a
+precomputed distribution", missing that `local_208` was already built locally
+above it; (b) no `skbjTemp` xref found in `HLLevel2.EXE` (Ghidra/capstone couldn't
+resolve base-relative refs) was wrongly taken as "no local writer" — but the DLL
+itself writes it (line 400).
 
-`HLLevel2.EXE` **does** have `modeWrite` file I/O, but capstone shows those
-writer functions write **raw market data**, not chip distribution:
-`1A0001` `tick` `real` `stockinfo` `trend` `%s%s-%s.%hx` `%04d%02d%02d`
-(date + hex-suffix filenames = raw tick/day feeds), plus `hqServer.exe`
-`Zm_rece.exe` (quote server / receiver). `skbjTemp` is **not** among them.
+### Implication for TradingView reproduction
+`WINNER`/`COST` are not just lookups — their core `local_208` accumulation
+(lines 205–265) rebuilds the distribution **locally from OHLCV**, exactly like
+standard TV `WINNER`. `winner_113.py`/`winner_113.pine` (rebuild 113-bin
+distribution from local OHLCV) are therefore on the right track. No server data
+is needed. Remaining gap: the `aiStack_1dc` hash mapping (lines 213–215) is not
+fully deciphered, so uniform 113 bins are used as an approximation.
 
-**Conclusion:** `skbjTemp.dat` is **not written by any locally-analyzable
-binary** — it is **computed by the HongLiTong quote server and pushed down**;
-the client receives it and persists it as a cache, then `WINNER`/`COST` read it.
-The raw cost-distribution algorithm lives **server-side**, not in this DLL.
-
-→ Reproducing on TradingView: `WINNER`/`COST` are easy (lookups); the hard part
-is rebuilding the `skbjTemp.dat` distribution, which requires either capturing
-the server protocol or approximating with standard TV `WINNER` from local OHLCV.
+See `docs/LOCAL_COMPUTE_CORRECTION.md` for the full correction, and
+`docs/SKBJ_TRACING.md` for the original (now-overturned) tracing notes.
 
 ## Repository layout
 
