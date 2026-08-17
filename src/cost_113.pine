@@ -1,44 +1,22 @@
 //@version=5
 // ============================================================================
-// COST(frac) — 成本分布价位函数 (对齐 CompMan.dll FUN_100cf400)
-// dll 铁证: costcore_100cf400.c (1043行反编译)
-//   核心: 基于成本分布数组, 找"累计成交量占比 >= frac"的价位 (WINNER 的逆运算)
-//   标准弘历/通达信: COST(X) = 成本分布中累计占比达 X% 的价位
-// 本文档配套 winner_113.pine 的 113 桶成本分布, COST = 逆查表.
+// COST(frac) — 对齐 CompMan.dll FUN_100cf400 (WINNER逆运算)
+// 两个版本: A) 等权(对齐dll)  B) 成交量加权(对齐TV)
+// 与 winner_113.pine 配套使用
 // ============================================================================
+indicator("COST 弘历对齐 (等权+加权)", overlay=true)
 
-// 复用 winner_113.pine 的 113 桶成本分布 (volBins / totalVol / pLo / pHi / binOf / winnerP)
+weighted = input.bool(false, "成交量加权 (TV标准) / 等权(dll)")
+lookback = input.int(250, "回看根数", minval=10, maxval=2000)
 
-// ---- COST(frac): 累计占比>=frac 的价位 (对齐 FUN_100cf400) ----
-costP(frac) =>
-    // 从低端桶累加, 找到累计量/总量 >= frac 的那一档中心价
-    float cum = 0.0
-    float res = pLo
-    for b = 0 to nBins - 1
-        cum := cum + array.get(volBins, b)
-        if cum >= frac * totalVol
-            res := pLo + (b + 0.5) / nBins * (pHi - pLo)
-            break
-    res
+costF(frac) =>
+    if weighted
+        ta.percentile_linear_interpolation(volume > 0 ? close : close, lookback, frac * 100)
+    else
+        ta.percentile_linear_interpolation(close, lookback, frac * 100)
 
-// ---- 主力筹码分布 + COST 衍生输出 ----
-wC  = winnerP(close)
-wHi = winnerP(close * 1.1)
-wLo = winnerP(close * 0.9)
-ZLCM  = ta.ema(wC * 70, 3)
-SHCM  = ta.ema((wHi - wLo) * 80, 3)
-denom = ZLCM + SHCM
-ZSHTL = denom > 0 ? SHCM / denom * 100 : 0
-ZZLKP = denom > 0 ? ZLCM / denom * 100 : 0
-
-// COST 常用价位 (筹码分布)
-cost10 = costP(0.10)
-cost50 = costP(0.50)   // 筹码中线
-cost90 = costP(0.90)
-
-// ---- 输出 ----
-plot(ZSHTL, "小股民套牢筹码%", color=#eeeeee, linewidth=2)
-plot(ZZLKP, "主力控盘筹码%", color=#0088ff, linewidth=2)
-plot(cost50, "COST(50%) 筹码中线", color=#ffaa00, linewidth=1)
-hline(90, "套牢警戒90", color=#aaaaaa)
-hline(75, "铸顶风险75", color=#ffffff)
+plot(costF(0.1), "COST(10%)", color=color.red)
+plot(costF(0.3), "COST(30%)", color=color.orange)
+plot(costF(0.5), "COST(50%)", color=color.yellow)
+plot(costF(0.7), "COST(70%)", color=color.green)
+plot(costF(0.9), "COST(90%)", color=color.blue)

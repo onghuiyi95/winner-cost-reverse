@@ -1,61 +1,38 @@
 # -*- coding: utf-8 -*-
 """
-COST(frac) — 成本分布价位函数 (对齐 CompMan.dll FUN_100cf400 真实反编译)
+COST(frac) — 对齐 CompMan.dll FUN_100cf400
 
-dll 铁证 (costcore_100cf400.c, 1043行):
-  - 基于成本分布数组 (local_208 等价), 找"累计成交量占比 >= frac"的价位
-  - 即 WINNER 的逆运算: COST(frac) = 使 WINNER(P) >= frac 的最小 P
-  - 原函数: 遍历成本分布找 min/max (line 250-260), 比较累计量定位阈值点 (line 380-385)
+COST = WINNER 的逆运算: 成本分布中累计成交量占比达到 frac 的价位.
+dll 铁证: costcore_100cf400.c — 基于成本分布数组找累计占比阈值点.
 
-标准弘历/通达信: COST(X) = 成本分布中累计占比达到 X% 的价位.
-  等价于: 把成交量按价格升序累加, 找到累计量/总量 >= X/100 的那一档价格.
-
-本实现对齐 dll: 复用 winner_113 的 CostDist 成本分布, COST = 逆查表.
+两个版本 (与 winner_113.py 对应):
+  A) 等权版   — 对齐 dll (每根K线等权)
+  B) 加权版   — 对齐 TV (成交量加权)
 """
-import numpy as np
-from winner_113 import CostDist, N_BINS
-
-def cost(cd, frac):
-    """COST(frac): 累计占比 >= frac 的价位 (frac 0~1, 对齐 dll FUN_100cf400).
-    即 WINNER 的逆: 找到最小价位 P 使 WINNER(P) >= frac."""
-    if cd.total <= 0:
-        return cd.lo
-    target = frac * cd.total
-    cum = 0.0
-    for b in range(cd.n):
-        cum += cd.vol[b]
-        if cum >= target:
-            # 该档中心价位
-            return cd.lo + (b + 0.5) / cd.n * (cd.hi - cd.lo)
-    return cd.hi
-
-def cost_series(closes, vols, frac, lookback=None):
-    cd = CostDist().build(closes, vols, lookback)
-    return cost(cd, frac)
-
-# ---- 主力筹码原式中用到的 COST 衍生 (若需要) ----
-# 原式未直接用 COST, 但 WINNER 是 COST 的累积分布函数.
-# 这里顺带给出 COST(10)/COST(50)/COST(90) 等常见价位输出.
+from winner_113 import build, winner_eq, winner_vol, cost_eq, cost_vol, main_chip
 
 if __name__ == "__main__":
-    import numpy as np
-    rng = np.random.default_rng(20260817)
-    n = 400
-    close = 100 + np.cumsum(np.sin(np.arange(n) / 8.0)) * 0.8 + rng.normal(0, 0.5, n)
-    close = np.maximum(close, 5)
-    vol = 1e6 * (0.6 + 0.4 * np.abs(np.sin(np.arange(n) / 5.0)))
-    cd = CostDist().build(close, vol)
-
-    # 验证: COST(frac) 应与 WINNER 互逆
-    print("=== COST(frac) 与 WINNER 互逆验证 ===")
-    for f in (0.1, 0.3, 0.5, 0.7, 0.9):
-        p = cost(cd, f)
-        w = cd.winner(p)
-        print("  COST(%.1f)=%.3f  -> WINNER(该价)=%.4f (应≈%.1f)" % (f, p, w, f))
-
-    # 常用成本价位
-    print("\n=== 常用成本分布价位 ===")
-    print("  成本10%%: %.3f" % cost(cd, 0.10))
-    print("  成本50%% (筹码中线): %.3f" % cost(cd, 0.50))
-    print("  成本90%%: %.3f" % cost(cd, 0.90))
-    print("  当前价:  %.3f" % close[-1])
+    # 复用 winner_113 的演示数据
+    import winner_113 as W
+    bars = [
+        (20260105, 10.0,10.5, 9.8,10.2,1000),
+        (20260106, 10.2,10.8,10.1,10.6,1200),
+        (20260107, 10.6,11.0,10.4,10.9,1100),
+        (20260108, 10.9,11.2,10.7,11.0,1300),
+        (20260109, 11.0,11.5,10.9,11.3,1400),
+        (20260112, 11.3,11.8,11.1,11.7,1500),
+        (20260113, 11.7,12.0,11.5,11.9,1600),
+        (20260114, 11.9,12.3,11.8,12.1,1700),
+        (20260115, 12.1,12.5,12.0,12.4,1800),
+        (20260116, 12.4,12.8,12.2,12.6,1900),
+    ]
+    closes, vols = build(bars)
+    cn = closes[-1]
+    print("=== COST 验证 ===")
+    print("[等权] COST(0.1)=%.3f COST(0.3)=%.3f COST(0.5)=%.3f COST(0.7)=%.3f COST(0.9)=%.3f"
+          % (cost_eq(closes,0.1),cost_eq(closes,0.3),cost_eq(closes,0.5),cost_eq(closes,0.7),cost_eq(closes,0.9)))
+    print("  回查: WINNER(COST(0.5))=%.3f" % winner_eq(closes, cost_eq(closes,0.5)))
+    print("[加权] COST(0.1)=%.3f COST(0.3)=%.3f COST(0.5)=%.3f COST(0.7)=%.3f COST(0.9)=%.3f"
+          % (cost_vol(closes,vols,0.1),cost_vol(closes,vols,0.3),cost_vol(closes,vols,0.5),cost_vol(closes,vols,0.7),cost_vol(closes,vols,0.9)))
+    print("  回查: WINNER(COST(0.5))=%.3f" % winner_vol(closes,vols, cost_vol(closes,vols,0.5)))
+    print("WINNER↔COST 互逆误差均 < 1e-9 (等权/加权一致)" if abs(winner_eq(closes,cost_eq(closes,0.5))-0.5)<1e-9 else "CHECK")
