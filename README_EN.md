@@ -23,9 +23,9 @@ Both functions are **isomorphic**: each does data-load (`FUN_100dd8dc` /
 (`LOCK`/`UNLOCK`) + result formatting (`%.3lf`). They are **not** a "one does
 infra, one does math" split.
 
-## Key result: who computes the chip distribution?
+## Key result: who computes the chip distribution? (skbjTemp.dat tracing)
 
-`skbjTemp.dat` is referenced **read-only once** in the whole DLL
+`skbjTemp.dat` is referenced **read-only once** in the whole `CompMan.dll`
 (`CFile::Open(..., 0x8000 = modeRead)`, then `CFile::Read`/`Close`). A full
 scan shows **zero** `modeWrite`/`modeCreate` and **only one** `.dat` filename.
 → The chip-distribution data is **pre-computed and written to disk by HongLiTong's
@@ -33,9 +33,32 @@ upstream data engine** (separate process / likely server-pushed daily
 distribution). `WINNER`/`COST` only **read the cache and do a table lookup** —
 they do **not** compute the raw cost distribution.
 
-This means reproducing WINNER/COST on TradingView is easy (they are just
-lookups); the hard part is reconstructing the `skbjTemp.dat` algorithm, which
-lives **outside this DLL**.
+### Upstream-writer tracing (2026-08-18)
+
+Scanned `HLLevel2.EXE`, `HLLevel2-2.EXE`, `Fortune.EXE`, `RecvSend-*.dll`, `CompMan.dll`:
+
+| Binary | skbjTemp string | References it (write)? |
+|---|---|---|
+| `CompMan.dll` | yes | read-only (`modeRead`) |
+| `HLLevel2.EXE` | yes (VA `0x00d137c1`, `.rdata`) | **no static xref** (base-relative ref, Ghidra/capstone can't resolve) |
+| `HLLevel2-2.EXE` | yes | same copy |
+| `Fortune.EXE` | **no** | — |
+| `RecvSend-*.dll` | **no** | — |
+
+`HLLevel2.EXE` **does** have `modeWrite` file I/O, but capstone shows those
+writer functions write **raw market data**, not chip distribution:
+`1A0001` `tick` `real` `stockinfo` `trend` `%s%s-%s.%hx` `%04d%02d%02d`
+(date + hex-suffix filenames = raw tick/day feeds), plus `hqServer.exe`
+`Zm_rece.exe` (quote server / receiver). `skbjTemp` is **not** among them.
+
+**Conclusion:** `skbjTemp.dat` is **not written by any locally-analyzable
+binary** — it is **computed by the HongLiTong quote server and pushed down**;
+the client receives it and persists it as a cache, then `WINNER`/`COST` read it.
+The raw cost-distribution algorithm lives **server-side**, not in this DLL.
+
+→ Reproducing on TradingView: `WINNER`/`COST` are easy (lookups); the hard part
+is rebuilding the `skbjTemp.dat` distribution, which requires either capturing
+the server protocol or approximating with standard TV `WINNER` from local OHLCV.
 
 ## Repository layout
 
@@ -46,7 +69,10 @@ decompiled/        Real Ghidra decompilations (C source)
   aiStack_1dc_real.txt    113 real constants (verbatim from binary)
   fn_100934f0.c           WINNER constructor
   winner_compute.c        WINNER vtable destructor (holds vtable name)
-docs/               Reverse-engineering notes (Chinese)
+docs/               Reverse-engineering notes (Chinese + tracing)
+  WINNER_完整反编译记录.md
+  WINNER_算法白皮书.md
+  SKBJ_TRACING.md         upstream skbjTemp.dat writer tracing
 src/                Implementations (verified)
   winner_113.py     WINNER(P) + main-chip distribution (ZLCM/SHCM/ZSHTL/ZZLKP)
   cost_113.py       COST(frac) + WINNER↔COST inverse check
