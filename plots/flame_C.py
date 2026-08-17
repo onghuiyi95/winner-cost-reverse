@@ -18,9 +18,10 @@ from matplotlib.patches import Rectangle
 plt.rcParams["font.sans-serif"]=["SimHei","Microsoft YaHei","SimSun"]
 plt.rcParams["axes.unicode_minus"]=False
 
-CSV = r"C:/Users/Administrator/hllevel2_reverse/winner_reverse/pufa_600000.csv"
+CSV = r"C:/Users/Administrator/hllevel2_reverse/winner_reverse/pufa_sina.csv"
 CUT_DATE = 20210312
 NBINS = 1000
+DECAY = 0.98
 
 def load(csv_path, cut=None):
     bars=[]
@@ -31,13 +32,15 @@ def load(csv_path, cut=None):
             bars.append((int(d),float(r["open"]),float(r["high"]),float(r["low"]),float(r["close"]),float(r["vol"])))
     return bars
 
-def cost_histogram(bars, nbins=NBINS):
+def cost_histogram(bars, nbins=NBINS, decay=DECAY):
     closes=[b[4] for b in bars]; vols=[b[5] for b in bars]
     lo=min(closes); hi=max(closes)
     edges=np.linspace(lo,hi,nbins+1); centers=(edges[:-1]+edges[1:])/2
     hist=np.zeros(nbins)
-    for c,v in zip(closes,vols):
-        idx=int((c-lo)/(hi-lo)*(nbins-1)); idx=max(0,min(nbins-1,idx)); hist[idx]+=v
+    n=len(vols)
+    w=np.array([decay**(n-1-i) for i in range(n)]) if decay is not None else np.ones(n)
+    for i,c in enumerate(closes):
+        idx=int((c-lo)/(hi-lo)*(nbins-1)); idx=max(0,min(nbins-1,idx)); hist[idx]+=vols[i]*w[i]
     return centers, hist, lo, hi
 
 def winner_at(hist, centers, price):

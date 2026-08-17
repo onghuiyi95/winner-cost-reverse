@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-火焰山(成本分布/CYQ) 绘制 — 版本A: Python matplotlib
-算法对齐弘历 dll FUN_008d9950 (逆向铁证):
-  - 每根K线 1000 价格桶的成交量加权直方图
-  - 获利盘 = 截止价以下桶累计 / 总累计
-  - N天前% = 直方图往前回溯 N 根K线再算获利盘
-  - 常量: 价格精度10000.0, 百分比100.0
-布局: 左K线 + 右火焰山(横轴占比/纵轴价格, 黄=获利红=套牢) + 右下数据表
+火焰山(成本分布/CYQ) 绘制 — 版本A: Python matplotlib (含换手衰减, 对齐通达信CYQ)
+铁证修正 (2026-08-18):
+  之前三版缺 "远期换手衰减" -> 获利盘算成57% vs 原版93.88%
+  诊断: (H+L)/2成本 + 指数衰减(decay每日保留比例~0.98) -> 96% 接近原版
+  机制: 久远成交权重按 decay^(距今天数) 指数衰减 (通达信CYQ标准)
+算法: 每根K线1000桶成交量加权直方图 + 衰减 + WINNER(成本<=当前价占比)
 """
 import csv, datetime
 import numpy as np
@@ -16,10 +15,11 @@ import matplotlib.pyplot as plt
 plt.rcParams["font.sans-serif"]=["SimHei","Microsoft YaHei","SimSun"]
 plt.rcParams["axes.unicode_minus"]=False
 
-CSV = r"C:/Users/Administrator/hllevel2_reverse/winner_reverse/pufa_600000.csv"
-CUT_DATE = 20210312   # 成本分布日期 (你截图)
-NBINS = 1000          # dll: 每根K线1000价格桶
-LOOKBACKS = [100,90,80,70,60,50,40,30,20,10]  # 你图里的 N天前
+CSV = r"C:/Users/Administrator/hllevel2_reverse/winner_reverse/pufa_sina.csv"
+CUT_DATE = 20210312
+NBINS = 1000
+LOOKBACKS = [100,90,80,70,60,50,40,30,20,10]
+DECAY = 0.98   # 换手衰减: 每日保留比例 (对齐原版~93-96%)
 
 def load(csv_path, cut=None):
     bars=[]
@@ -30,13 +30,16 @@ def load(csv_path, cut=None):
             bars.append((int(d),float(r["open"]),float(r["high"]),float(r["low"]),float(r["close"]),float(r["vol"])))
     return bars
 
-def cost_histogram(bars, nbins=NBINS):
-    closes=[b[4] for b in bars]; vols=[b[5] for b in bars]
-    lo=min(closes); hi=max(closes)
+def cost_histogram(bars, nbins=NBINS, decay=None):
+    c=np.array([(b[2]+b[3])/2 for b in bars]); v=np.array([b[5] for b in bars],float)
+    n=len(v)
+    if decay is not None:
+        w=np.array([decay**(n-1-i) for i in range(n)]); v=v*w
+    lo,hi=c.min(),c.max()
     edges=np.linspace(lo,hi,nbins+1); centers=(edges[:-1]+edges[1:])/2
     hist=np.zeros(nbins)
-    for c,v in zip(closes,vols):
-        idx=int((c-lo)/(hi-lo)*(nbins-1)); idx=max(0,min(nbins-1,idx)); hist[idx]+=v
+    for ci,vi in zip(c,v):
+        idx=int((ci-lo)/(hi-lo)*(nbins-1)); idx=max(0,min(nbins-1,idx)); hist[idx]+=vi
     return centers, hist, lo, hi
 
 def winner_at(hist, centers, price):
@@ -46,18 +49,18 @@ def winner_at(hist, centers, price):
     idx=max(0,min(len(hist)-1,idx))
     return hist[:idx+1].sum()/tot
 
-def compute(bars, cut_date=CUT_DATE, lookbacks=LOOKBACKS):
-    idx_cut=None
+def compute(bars, cut_date=CUT_DATE, decay=DECAY, lookbacks=LOOKBACKS):
+    idx_cut=0
     for i,b in enumerate(bars):
         if b[0]>=cut_date: idx_cut=i; break
-    if idx_cut is None: idx_cut=len(bars)-1
+    if idx_cut>=len(bars): idx_cut=len(bars)-1
     sub=bars[:idx_cut+1]; cur_price=sub[-1][4]
-    centers,hist,lo,hi=cost_histogram(sub)
+    centers,hist,lo,hi=cost_histogram(sub, decay=decay)
     win_now=winner_at(hist,centers,cur_price)
     rows=[]
     for n in lookbacks:
         k=max(1,idx_cut+1-n)
-        c2,h2,_,_=cost_histogram(bars[:k+1])
+        c2,h2,_,_=cost_histogram(bars[:k+1], decay=decay)
         rows.append((n, winner_at(h2,c2,cur_price)*100))
     return dict(cur_price=cur_price, cut_date=sub[-1][0], profit=win_now*100,
                 loss=(1-win_now)*100, centers=centers, hist=hist, rows=rows,
@@ -75,7 +78,7 @@ def draw_a(res, out_png):
     for i,c in enumerate(centers):
         ax.barh(c, hist[i]/maxh*100, height=bw, color=("#ffcc00" if c<=cur else "#ff3030"), edgecolor="none")
     ax.axhline(cur,color="cyan",lw=1.5,label="当前价 %.2f"%cur)
-    ax.set_xlabel("持仓占比 (%)"); ax.set_ylabel("价格"); ax.set_title("火焰山成本分布 浦发银行600000")
+    ax.set_xlabel("持仓占比 (%)"); ax.set_ylabel("价格"); ax.set_title("火焰山成本分布 浦发600000 (含衰减%.2f)"%DECAY)
     ax.legend(loc="upper right")
     ax2=fig.add_axes([0.85,0.1,0.14,0.8]); ax2.axis("off")
     txt=["流通盘：-","套牢盘：%.2f%%"%res["loss"],"获利盘：%.2f%%"%res["profit"],
@@ -86,6 +89,6 @@ def draw_a(res, out_png):
 
 if __name__=="__main__":
     bars=load(CSV, cut=CUT_DATE); res=compute(bars)
-    print("当前价 %.2f  获利盘 %.2f%%  套牢盘 %.2f%%"%(res["cur_price"],res["profit"],res["loss"]))
+    print("DECAY=%.2f 当前价 %.2f 获利盘 %.2f%% 套牢盘 %.2f%%"%(DECAY,res["cur_price"],res["profit"],res["loss"]))
     for n,p in res["rows"]: print("%d天前 %.2f%%"%(n,p))
     draw_a(res, r"C:/Users/Administrator/hllevel2_reverse/winner_reverse/flame_A.png")
