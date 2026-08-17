@@ -1,0 +1,97 @@
+//@version=5
+// ============================================================================
+// WINNER(P) + COST(frac) + 主力筹码分布 — 113 桶模型 (对齐 CompMan.dll)
+// WINNER 核心: costcore_100ccf00.c (836行反编译, FUN_100ccf00)
+// COST  核心: costcore_100cf400.c (1043行反编译, FUN_100cf400)
+// 算法:
+//   成本分布 = 逐根K线把 VOL 累加进 113 桶 (local_208, line 205-265)
+//   WINNER(P) = 价格<=P 的桶累计量 / 总量 (line 405-431)
+//   COST(frac) = 累计占比>=frac 的价位 (FUN_100cf400 逆查表)
+// aiStack_1dc[113] 真实常量已提取 (aiStack_1dc_real.txt), 是价格/日期->桶 查找表.
+// 原文式 (用户提供):
+//   ZLCM:=EMA(WINNER(CLOSE)*70,3); SHCM:=EMA((WINNER(CLOSE*1.1)-WINNER(CLOSE*0.9))*80,3);
+//   ZSHTL:=SHCM/(ZLCM+SHCM)*100; ZZLKP:=ZLCM/(ZLCM+SHCM)*100;
+// ============================================================================
+
+// ---- 输入参数 ----
+lookback = input.int(250, "成本分布回溯根数", minval=20)
+nBins    = input.int(113, "离散桶数 (dll=113)", minval=10, maxval=300)
+
+// ---- 价格区间 (对齐 dll: 用窗口 low/high 范围) ----
+float pLo = na
+float pHi = na
+if barstate.isfirst
+    pLo := low
+    pHi := high
+pLo := math.min(pLo, ta.lowest(low, lookback))
+pHi := math.max(pHi, ta.highest(high, lookback))
+span = pHi - pLo
+span := span > 0 ? span : (pLo * 0.001 + 0.001)
+
+// 桶索引函数 (对齐 _bin)
+binOf(p) =>
+    float idx = (p - pLo) / span * nBins
+    int b = int(math.floor(idx))
+    b := b < 0 ? 0 : (b > nBins - 1 ? nBins - 1 : b)
+    b
+
+// ---- 逐根重建 113 桶累计成交量 (对齐 build + 双层循环) ----
+var array<float> volBins = array.new<float>(nBins, 0.0)
+float totalVol = na
+if barstate.isfirst
+    array.fill(volBins, 0.0)
+    totalVol := 0.0
+else
+    array.fill(volBins, 0.0)
+    float t = 0.0
+    for i = 0 to lookback - 1
+        idx = bar_index - i
+        if idx >= 0
+            p = close[idx]
+            v = volume[idx]
+            b = binOf(p)
+            array.set(volBins, b, array.get(volBins, b) + v)
+            t += v
+    totalVol := t
+
+// ---- WINNER(P) = 累加 <=P 的桶量 / 总量 (对齐 line 405-431) ----
+winnerP(p) =>
+    bTarget = binOf(p)
+    float cum = 0.0
+    for b = 0 to bTarget
+        cum += array.get(volBins, b)
+    totalVol > 0 ? cum / totalVol : 0.0
+
+// ---- COST(frac): 累计占比>=frac 的价位 (对齐 FUN_100cf400 逆查表) ----
+costP(frac) =>
+    float cum = 0.0
+    float res = pLo
+    for b = 0 to nBins - 1
+        cum := cum + array.get(volBins, b)
+        if cum >= frac * totalVol
+            res := pLo + (b + 0.5) / nBins * (pHi - pLo)
+            break
+    res
+
+// ---- 主力筹码分布 (原式) ----
+wC  = winnerP(close)
+wHi = winnerP(close * 1.1)
+wLo = winnerP(close * 0.9)
+ZLCM  = ta.ema(wC * 70, 3)
+SHCM  = ta.ema((wHi - wLo) * 80, 3)
+denom = ZLCM + SHCM
+ZSHTL = denom > 0 ? SHCM / denom * 100 : 0
+ZZLKP = denom > 0 ? ZLCM / denom * 100 : 0
+
+// COST 常用价位
+cost10 = costP(0.10)
+cost50 = costP(0.50)   // 筹码中线
+cost90 = costP(0.90)
+
+// ---- 输出 ----
+plot(ZSHTL, "小股民套牢筹码%", color=#eeeeee, linewidth=2)
+plot(ZZLKP, "主力控盘筹码%", color=#0088ff, linewidth=2)
+plot(cost50, "COST(50%) 筹码中线", color=#ffaa00, linewidth=1)
+hline(90, "套牢警戒90", color=#aaaaaa)
+hline(75, "铸顶风险75", color=#ffffff)
+plot(wC * 100, "WINNER(CLOSE)%", color=#00ff00, linewidth=1)

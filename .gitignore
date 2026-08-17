@@ -1,0 +1,15 @@
+# 二进制/凭证/临时文件 不上传
+*.dll
+*.exe
+*.dat
+*.cfg
+*.log
+_clone_list.txt
+**/*_archive/
+**/attachments/
+# Python 缓存
+__pycache__/
+*.pyc
+# 中间反编译驱动脚本 (非交付物)
+_decomp_*.py
+run_*.py
